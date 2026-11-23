@@ -303,6 +303,8 @@ class Unifi extends utils.Adapter {
             await this.subscribeStatesAsync('trigger_update');
             await this.subscribeStatesAsync('*.ports.port_*.poe_enabled');
             await this.subscribeStatesAsync('*.ports.port_*.poe_cycle');
+            await this.subscribeStatesAsync('*.ports.port_*.enable');
+            await this.subscribeStatesAsync('*.devices.*.enabled');
             await this.subscribeStatesAsync('*.clients.*.reconnect');
             await this.subscribeStatesAsync('*.clients.*.blocked');
             await this.subscribeStatesAsync('*.devices.*.led_override');
@@ -426,6 +428,11 @@ class Unifi extends utils.Adapter {
                     this.log.info(`onStateChange: port power cycle (port: ${portNumber}, device: ${mac})`);
 
                     await this.controllers[site].powerCycleSwitchPort(mac, portNumber);
+                } else if (idParts[5] === 'ports' && idParts[7] === 'enable') {
+                    const portNumber = idParts[6].split('_').pop() || '';
+                    await this.switchPort(site, mac, parseInt(portNumber, 10), !!state.val, id);
+                } else if (idParts[3] === 'devices' && idParts[5] === 'enabled' && idParts.length === 6) {
+                    await this.switchAccessPoint(site, mac, !!state.val);
                 } else if (idParts[5] === 'reconnect') {
                     await this.reconnectClient(id, idParts, site);
                 } else if (idParts[5] === 'blocked') {
@@ -1635,6 +1642,129 @@ class Unifi extends utils.Adapter {
             }
         } catch (err) {
             this.handleError(err, undefined, 'switchPoeOfPort');
+        }
+    }
+
+    /**
+     * Switches a port of a switch or gateway on or off like the port manager of UniFi Network 11 ("Port State:
+     * Disabled"): its `port_overrides` entry gets `forward: "disabled"` without network, VLANs blocked and port
+     * security on. The entry before (or none) is kept in the native part of the `enable` state and restored when the
+     * port is switched on again, so its name, VLANs and PoE stay as they were.
+     *
+     * @param site name of the site
+     * @param deviceMac MAC address of the switch
+     * @param portIdx number of the port
+     * @param enable true to switch the port on
+     * @param stateId ID of the `enable` state
+     */
+    private async switchPort(
+        site: string,
+        deviceMac: string,
+        portIdx: number,
+        enable: boolean,
+        stateId: string,
+    ): Promise<void> {
+        try {
+            const device = (await this.fetchDevices(site)).find(x => x.mac === deviceMac);
+            const port = Array.isArray(device?.port_table)
+                ? (device.port_table as { port_idx?: number; is_uplink?: boolean; forward?: string }[]).find(
+                      x => x.port_idx === portIdx,
+                  )
+                : undefined;
+            if (!device || !port) {
+                this.log.warn(`switchPort: port ${portIdx} of device ${deviceMac} not found`);
+                return;
+            }
+            if (!enable && port.is_uplink) {
+                // @KI_HINWEIS: the uplink connects the device to the network; switching it off makes the device and
+                // everything behind it unreachable, and it cannot be switched on again from ioBroker.
+                this.log.warn(
+                    `switchPort: port ${portIdx} of ${device.name ?? deviceMac} is the uplink of the device and is not switched off, the device would no longer be reachable.`,
+                );
+                await this.setStateAsync(stateId, { val: true, ack: true });
+                return;
+            }
+
+            const portOverrides = (Array.isArray(device.port_overrides) ? device.port_overrides : []) as Record<
+                string,
+                unknown
+            >[];
+            const index = portOverrides.findIndex(x => x.port_idx === portIdx);
+            const override = index >= 0 ? portOverrides[index] : undefined;
+            const forwardValue = override?.forward ?? port.forward;
+            const disabled = forwardValue === 'disabled';
+            if (enable !== disabled) {
+                this.log.debug(
+                    `switchPort: port ${portIdx} of ${deviceMac} is already switched ${enable ? 'on' : 'off'}`,
+                );
+                return;
+            }
+
+            if (enable) {
+                const stateObj = await this.getObjectAsync(stateId);
+                const saved = stateObj?.native?.overrideBeforeDisable as Record<string, unknown> | null | undefined;
+                if (saved === null) {
+                    // the port had no entry before, it uses the settings of the site again
+                    portOverrides.splice(index, 1);
+                } else if (saved && saved.forward !== 'disabled') {
+                    portOverrides[index] = saved;
+                } else {
+                    // @KI_HINWEIS: switched off in UniFi Network, the setting before is unknown. Without
+                    // native_networkconf_id the controller takes the default network.
+                    const restored: Record<string, unknown> = {
+                        ...override,
+                        forward: 'all',
+                        tagged_vlan_mgmt: 'auto',
+                        port_security_enabled: false,
+                    };
+                    delete restored.native_networkconf_id;
+                    portOverrides[index] = restored;
+                }
+            } else {
+                await this.extendObjectAsync(stateId, { native: { overrideBeforeDisable: override ?? null } });
+                const off = {
+                    ...(override ?? { port_idx: portIdx }),
+                    forward: 'disabled',
+                    native_networkconf_id: '',
+                    tagged_vlan_mgmt: 'block_all',
+                    port_security_enabled: true,
+                    port_security_mac_address: [],
+                };
+                if (index >= 0) {
+                    portOverrides[index] = off;
+                } else {
+                    portOverrides.push(off);
+                }
+            }
+
+            this.log.info(
+                `switchPort: port ${portIdx} of ${device.name ?? deviceMac} switched ${enable ? 'on' : 'off'}`,
+            );
+            await this.controllers[site].setDeviceSettingsBase(device.device_id, { port_overrides: portOverrides });
+        } catch (err) {
+            this.handleError(err, site, 'switchPort');
+        }
+    }
+
+    /**
+     * Switches an access point on or off (`disabled` of the device, like "Disable" in UniFi Network). A switched-off
+     * access point stays adopted and connected, but sends no WLAN and has no LEDs.
+     *
+     * @param site name of the site
+     * @param deviceMac MAC address of the access point
+     * @param enable true to switch it on
+     */
+    private async switchAccessPoint(site: string, deviceMac: string, enable: boolean): Promise<void> {
+        try {
+            const device = (await this.fetchDevices(site)).find(x => x.mac === deviceMac);
+            if (!device || device.type !== 'uap') {
+                this.log.warn(`switchAccessPoint: access point ${deviceMac} not found`);
+                return;
+            }
+            this.log.info(`switchAccessPoint: ${device.name ?? deviceMac} switched ${enable ? 'on' : 'off'}`);
+            await this.controllers[site].setDeviceSettingsBase(device.device_id, { disabled: !enable });
+        } catch (err) {
+            this.handleError(err, site, 'switchAccessPoint');
         }
     }
 

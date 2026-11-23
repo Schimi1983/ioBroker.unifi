@@ -113,18 +113,32 @@
                                                         "_id": "enable",
                                                         "type": "state",
                                                         "common": {
-                                                            "name": "Enable",
+                                                            "name": "Port enabled",
                                                             "type": "boolean",
-                                                            "role": "indicator",
+                                                            "role": "switch.enable",
                                                             "read": true,
-                                                            "write": false,
+                                                            "write": true,
                                                             "desc": ""
                                                         },
                                                         "native": {
                                                             "object_id": "devices.device.ports.port.enable"
                                                         },
                                                         "logic": {
-                                                            "value": "enable"
+                                                            "value": {
+                                                                "and": [
+                                                                    {
+                                                                        "var": "enable"
+                                                                    },
+                                                                    {
+                                                                        "!=": [
+                                                                            {
+                                                                                "var": "forward"
+                                                                            },
+                                                                            "disabled"
+                                                                        ]
+                                                                    }
+                                                                ]
+                                                            }
                                                         }
                                                     },
                                                     "devices.device.ports.port.is_uplink": {
@@ -2633,6 +2647,43 @@
                                 },
                                 "logic": {
                                     "value": "led_override"
+                                }
+                            },
+                            "devices.device.enabled": {
+                                "type": "state",
+                                "common": {
+                                    "name": "Access point enabled",
+                                    "type": "boolean",
+                                    "role": "switch.enable",
+                                    "read": true,
+                                    "write": true,
+                                    "desc": ""
+                                },
+                                "native": {
+                                    "object_id": "devices.device.enabled"
+                                },
+                                "logic": {
+                                    "_id": {
+                                        "if": [
+                                            {
+                                                "==": [
+                                                    {
+                                                        "var": "type"
+                                                    },
+                                                    "uap"
+                                                ]
+                                            },
+                                            "enabled",
+                                            null
+                                        ]
+                                    },
+                                    "value": {
+                                        "!": [
+                                            {
+                                                "var": "disabled"
+                                            }
+                                        ]
+                                    }
                                 }
                             },
                             "devices.device.ip": {

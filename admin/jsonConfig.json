@@ -656,6 +656,11 @@
                                     "description": "Led Override"
                                 },
                                 {
+                                    "label": "enabled",
+                                    "value": "devices.device.enabled",
+                                    "description": "Access point enabled"
+                                },
+                                {
                                     "label": "ip",
                                     "value": "devices.device.ip",
                                     "description": "IP address"
@@ -763,7 +768,7 @@
                                 {
                                     "label": "enable",
                                     "value": "devices.device.ports.port.enable",
-                                    "description": "Enable"
+                                    "description": "Port enabled"
                                 },
                                 {
                                     "label": "is_uplink",

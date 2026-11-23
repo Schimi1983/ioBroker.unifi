@@ -99,6 +99,8 @@ The traffic values are summed from hourly values of the console, so they are acc
 | `clients.<mac>.reconnect` | button: disconnect a wireless client so it connects again |
 | `devices.<mac>.restart` | button: restart the device |
 | `devices.<mac>.led_override` | LEDs `on`, `off` or `default` (setting of the site) |
+| `devices.<mac>.ports.port_<n>.enable` | switch the port on (`true`) or off (`false`), like *Port State: Disabled* in UniFi Network. PoE stays on. When switched on again, the port gets its previous settings (name, VLANs) back. The uplink of a device is never switched off, the device would no longer be reachable |
+| `devices.<mac>.enabled` | switch an access point on or off; switched off it stays adopted but sends no WLAN |
 | `devices.<mac>.ports.port_<n>.poe_enabled` | switch PoE of the port on or off |
 | `devices.<mac>.ports.port_<n>.poe_cycle` | button: switch PoE off and on again, e.g. to restart a camera |
 | `vouchers.create_vouchers` | button: create vouchers with the settings of the Vouchers tab |
@@ -176,6 +178,7 @@ Not all data of the API is mirrored into ioBroker. To check the raw data, open t
     ### **WORK IN PROGRESS**
 -->
 ### **WORK IN PROGRESS**
+- (@Schimi1983) Switch ports (`devices.<mac>.ports.port_<n>.enable`) and access points (`devices.<mac>.enabled`) on and off; the uplink of a device is never switched off (#759, #124, #718)
 - (@Schimi1983) **Breaking change, version 3:** objects sorted like the official UniFi Network API, see *Update from version 1 or 2* in the README for the table old → new. The adapter moves the history settings, rooms and functions to the new objects at the first start and deletes the old objects; scripts and visualizations with the old IDs have to be adjusted
 - (@Schimi1983) Devices: one folder per port with its settings (`ports.port_<n>`, `ports.port_<n>.settings` instead of `port_table` + `port_overrides`, PoE states without the prefix `port_`), `statistics` instead of `sys_stats` + `system-stats`, `radios` named by band, `uplink`
 - (@Schimi1983) Times are timestamps (role `value.time`) instead of text; the WAN statistics of the first internet connection are `wan.wan1`; internal client states `*_by_ugw`, `is_guest_by_*`, `uptime_by_*` removed

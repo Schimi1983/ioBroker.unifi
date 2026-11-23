@@ -350,7 +350,8 @@ describe('device structure of version 3', () => {
         device_id: 'ab976379',
         port_table: [
             { port_idx: 1, name: 'Port 1', enable: true, port_poe: true, poe_mode: 'auto', poe_power: '4.25', speed: 1000 },
-            { port_idx: 2, name: 'Port 2', enable: true, port_poe: true, poe_mode: 'off', speed: 0 },
+            { port_idx: 2, name: 'Port 2', enable: true, port_poe: true, poe_mode: 'off', speed: 0, forward: 'disabled' },
+            { port_idx: 3, name: 'Port 3', enable: true, forward: 'all' },
         ],
         port_overrides: [{ port_idx: 1, name: 'Camera', poe_mode: 'auto', isolation: false, full_duplex: true }],
     };
@@ -378,6 +379,10 @@ describe('device structure of version 3', () => {
         assert.strictEqual(adapter.val(`${sw}.ports.port_1.settings.name`), 'Camera');
         assert.strictEqual(adapter.val(`${sw}.ports.port_1.settings.full_duplex`), true);
         assert.strictEqual(adapter.objects.has(`unifi.0.${sw}.ports.port_2.settings`), false);
+        // switched off in the port manager: forward "disabled", "enable" changes only after the provisioning
+        assert.strictEqual(adapter.val(`${sw}.ports.port_2.enable`), false);
+        assert.strictEqual(adapter.val(`${sw}.ports.port_3.enable`), true);
+        assert.strictEqual(adapter.objects.get(`unifi.0.${sw}.ports.port_3.enable`).common.role, 'switch.enable');
 
         // nothing of the structure of version 2
         assert.ok(

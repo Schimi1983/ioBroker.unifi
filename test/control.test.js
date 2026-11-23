@@ -194,4 +194,133 @@ describe('control states', () => {
             sinon.assert.calledOnceWithExactly(adapter.switchPoeOfPort, 'default', MAC, '3', true);
         });
     });
+    describe('switching ports and access points', () => {
+        const portId = `unifi.0.default.devices.${MAC}.ports.port_3.enable`;
+        const device = (overrides, forward = 'all') => ({
+            mac: MAC,
+            name: 'USW Ultra',
+            device_id: 'dev1',
+            port_table: [
+                { port_idx: 1, is_uplink: true, forward: 'all' },
+                { port_idx: 3, is_uplink: false, forward },
+            ],
+            port_overrides: overrides,
+        });
+
+        beforeEach(() => {
+            adapter.objects.set(portId, { _id: portId, type: 'state', common: {}, native: {} });
+        });
+
+        const OFF = {
+            forward: 'disabled',
+            native_networkconf_id: '',
+            tagged_vlan_mgmt: 'block_all',
+            port_security_enabled: true,
+            port_security_mac_address: [],
+        };
+
+        it('switches a port off like the port manager and keeps the overrides of the other ports', async () => {
+            const before = { port_idx: 3, name: 'Camera', forward: 'customize', native_networkconf_id: 'net1' };
+            controller.getAccessDevices.resolves([device([{ port_idx: 1, poe_mode: 'auto' }, before])]);
+
+            await adapter.switchPort('default', MAC, 3, false, portId);
+
+            sinon.assert.calledOnceWithExactly(controller.setDeviceSettingsBase, 'dev1', {
+                port_overrides: [{ port_idx: 1, poe_mode: 'auto' }, { port_idx: 3, name: 'Camera', ...OFF }],
+            });
+            assert.deepStrictEqual(adapter.objects.get(portId).native.overrideBeforeDisable, before);
+        });
+
+        it('restores the entry of the port when it is switched on again', async () => {
+            const before = { port_idx: 3, name: 'Camera', forward: 'customize', native_networkconf_id: 'net1' };
+            adapter.objects.get(portId).native.overrideBeforeDisable = before;
+            controller.getAccessDevices.resolves([device([{ port_idx: 3, name: 'Camera', ...OFF }], 'disabled')]);
+
+            await adapter.switchPort('default', MAC, 3, true, portId);
+
+            assert.deepStrictEqual(controller.setDeviceSettingsBase.firstCall.args[1].port_overrides, [before]);
+        });
+
+        it('removes the entry again if the port had none before', async () => {
+            controller.getAccessDevices.resolves([device([])]);
+            await adapter.switchPort('default', MAC, 3, false, portId);
+            assert.deepStrictEqual(controller.setDeviceSettingsBase.firstCall.args[1].port_overrides, [
+                { port_idx: 3, ...OFF },
+            ]);
+            assert.strictEqual(adapter.objects.get(portId).native.overrideBeforeDisable, null);
+
+            controller.getAccessDevices.resolves([device([{ port_idx: 3, ...OFF }], 'disabled')]);
+            await adapter.switchPort('default', MAC, 3, true, portId);
+
+            assert.deepStrictEqual(controller.setDeviceSettingsBase.secondCall.args[1].port_overrides, []);
+        });
+
+        it('switches a port on with the default network if it was switched off in UniFi Network', async () => {
+            controller.getAccessDevices.resolves([device([{ port_idx: 3, name: 'Camera', ...OFF }], 'disabled')]);
+
+            await adapter.switchPort('default', MAC, 3, true, portId);
+
+            assert.deepStrictEqual(controller.setDeviceSettingsBase.firstCall.args[1].port_overrides, [
+                {
+                    port_idx: 3,
+                    name: 'Camera',
+                    forward: 'all',
+                    tagged_vlan_mgmt: 'auto',
+                    port_security_enabled: false,
+                    port_security_mac_address: [],
+                },
+            ]);
+        });
+
+        it('does not switch off the uplink of a device and resets the state', async () => {
+            const uplinkId = `unifi.0.default.devices.${MAC}.ports.port_1.enable`;
+            controller.getAccessDevices.resolves([device([])]);
+
+            await adapter.switchPort('default', MAC, 1, false, uplinkId);
+
+            sinon.assert.notCalled(controller.setDeviceSettingsBase);
+            sinon.assert.calledWithMatch(adapter.log.warn, /is the uplink of the device/);
+            assert.strictEqual(adapter.val(`default.devices.${MAC}.ports.port_1.enable`), true);
+        });
+
+        it('sends nothing if the port already has the requested state', async () => {
+            controller.getAccessDevices.resolves([device([])]);
+            await adapter.switchPort('default', MAC, 3, true, portId);
+
+            controller.getAccessDevices.resolves([device([{ port_idx: 3, ...OFF }], 'disabled')]);
+            await adapter.switchPort('default', MAC, 3, false, portId);
+
+            sinon.assert.notCalled(controller.setDeviceSettingsBase);
+        });
+
+        it('switches an access point off and on', async () => {
+            controller.getAccessDevices.resolves([{ mac: MAC, name: 'Garage', device_id: 'ap1', type: 'uap' }]);
+
+            await adapter.switchAccessPoint('default', MAC, false);
+            await adapter.switchAccessPoint('default', MAC, true);
+
+            sinon.assert.calledWithExactly(controller.setDeviceSettingsBase.firstCall, 'ap1', { disabled: true });
+            sinon.assert.calledWithExactly(controller.setDeviceSettingsBase.secondCall, 'ap1', { disabled: false });
+        });
+
+        it('switches only access points', async () => {
+            controller.getAccessDevices.resolves([{ mac: MAC, device_id: 'sw1', type: 'usw' }]);
+
+            await adapter.switchAccessPoint('default', MAC, false);
+
+            sinon.assert.notCalled(controller.setDeviceSettingsBase);
+        });
+
+        it('is triggered by the enable state of a port and the enabled state of a device', async () => {
+            adapter.switchPort = sinon.stub().resolves();
+            adapter.switchAccessPoint = sinon.stub().resolves();
+
+            await write(`devices.${MAC}.ports.port_3.enable`, false);
+            await write(`devices.${MAC}.enabled`, false);
+            await write(`wlans.Home.enabled`, false).catch(() => undefined);
+
+            sinon.assert.calledOnceWithExactly(adapter.switchPort, 'default', MAC, 3, false, portId);
+            sinon.assert.calledOnceWithExactly(adapter.switchAccessPoint, 'default', MAC, false);
+        });
+    });
 });
